@@ -15,7 +15,6 @@ from qgis.PyQt.QtCore import QVariant
 import processing
 import requests
 from qgis.utils import iface
-
 from .common import *
 
 def load_saga_algorithms():

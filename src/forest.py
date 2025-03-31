@@ -23,8 +23,8 @@ import os
 import numpy as np
 from qgis.utils import iface
 import math
-from common import *
-from point_collector import PointCollector
+from .common import *
+from .point_collector import PointCollector
 
 # Инициализация сбора точек
 def start_point_collection():
