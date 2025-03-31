@@ -1,3 +1,3 @@
 def classFactory(iface):
-    from .main import CustomDEMPlugin
+    from src.main import CustomDEMPlugin
     return CustomDEMPlugin(iface)
