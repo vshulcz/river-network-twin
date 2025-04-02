@@ -514,7 +514,7 @@ def create_forest_belts(project_folder):
     return
 
 def forest(project_folder):
-        get_main_def()
+        get_main_def(project_folder)
 
         main_dem_file_path = os.path.join(project_folder, "srtm_output.tif")  # Путь к вашему DEM файлу
         masked_dem_output_path = os.path.join(project_folder, "masked_dem.tif")  # Путь к выходному файлу после обрезки
