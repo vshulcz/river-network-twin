@@ -1,6 +1,7 @@
 from qgis.core import (
     QgsProject,
     QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
     QgsPointXY,
     QgsRasterLayer,
     QgsVectorLayer,
@@ -22,6 +23,29 @@ def load_saga_algorithms():
     provider.loadAlgorithms()
 
     QgsApplication.processingRegistry().addProvider(provider=provider)
+
+
+def transform_bbox(x_min, x_max, y_min, y_max, from_epsg, to_epsg):
+    # Создаем объекты систем координат
+    from_crs = QgsCoordinateReferenceSystem(f"EPSG:{from_epsg}")
+    to_crs = QgsCoordinateReferenceSystem(f"EPSG:{to_epsg}")
+    tr = QgsCoordinateTransform(from_crs, to_crs, QgsProject.instance())
+
+    # Преобразуем все 4 угла bbox
+    points = [
+        QgsPointXY(x_min, y_min),
+        QgsPointXY(x_min, y_max),
+        QgsPointXY(x_max, y_max),
+        QgsPointXY(x_max, y_min)
+    ]
+
+    transformed_points = [tr.transform(point) for point in points]
+
+    # Находим новые границы
+    x_coords = [p.x() for p in transformed_points]
+    y_coords = [p.y() for p in transformed_points]
+
+    return f"{min(x_coords)}, {max(x_coords)}, {min(y_coords)}, {max(y_coords)}"
 
 
 def river(project_folder):    
@@ -78,8 +102,11 @@ def river(project_folder):
     basins = QgsRasterLayer(f'{project_folder}basins.sdat', 'basins')
     QgsProject.instance().addMapLayer(basins)
 
+
     # Использовать QuickOSM для запроса данных о водных путях на заданной территории
-    bbox = "4261842, 4372940, 7611625, 7813231"
+    ##bbox = "4261842, 4372940, 7611625, 7813231"
+    #Аддаптивные границы для начальных данных
+    bbox = transform_bbox(xmin, xmax, ymin, ymax, 4326, 3857)
 
     # Загрузить реки
     query = processing.run('quickosm:buildqueryextent', {
