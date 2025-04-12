@@ -10,6 +10,7 @@ from qgis.core import (
 from qgis.PyQt.QtWidgets import QMessageBox
 import processing
 
+
 def least_cost_path_analysis(project_folder):
     # Получение необходимых слоев
     try:

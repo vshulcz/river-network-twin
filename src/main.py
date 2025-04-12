@@ -1,8 +1,16 @@
-from qgis.core import QgsProject
-from qgis.PyQt.QtWidgets import QFileDialog, QMessageBox
-from PyQt5.QtWidgets import QPushButton, QDialog, QVBoxLayout, QLabel, QCheckBox
-import glob
 import os
+import glob
+from qgis.core import QgsProject
+from qgis.PyQt.QtWidgets import (
+    QFileDialog,
+    QMessageBox,
+    QAction,
+    QPushButton,
+    QDialog,
+    QVBoxLayout,
+    QLabel,
+    QCheckBox,
+)
 from qgis.utils import iface
 from .common import *
 from .river import river
@@ -11,43 +19,44 @@ from .forest import forest
 
 
 class CustomDEMPlugin:
-
-    project_folder = None
-
     def __init__(self, iface):
         self.iface = iface
+        self.project_folder = ""
         self.plugin_name = "RiverNETWORK"
 
     def initGui(self):
-        #Для запуска плагина
-        from qgis.PyQt.QtWidgets import QAction
         self.action = QAction(self.plugin_name, self.iface.mainWindow())
         self.action.triggered.connect(self.run_plugin)
         self.iface.addToolBarIcon(self.action)
         self.iface.addPluginToMenu("&RiverNETWORK", self.action)
 
     def unload(self):
-        #Удаление плагина
+        """
+        Удаление плагина
+        """
         self.iface.removeToolBarIcon(self.action)
         self.iface.removePluginMenu("&RiverNETWORK", self.action)
 
     def run_plugin(self):
-        #Код плагина
-        CustomDEMPlugin.project_folder = QFileDialog.getExistingDirectory(
-            None, "Выберите рабочую папку"
-        )
-        if not CustomDEMPlugin.project_folder:
-            QMessageBox.warning(None, "Ошибка", "Рабочая папка не выбрана. Работа плагина прекращена.")
+        # Код плагина
+        folder = QFileDialog.getExistingDirectory(None, "Выберите рабочую папку")
+        if not folder:
+            QMessageBox.warning(
+                None, "Ошибка", "Рабочая папка не выбрана. Работа плагина прекращена."
+            )
             return
-        
+
         # Создать папку "work" внутри выбранной папки
-        CustomDEMPlugin.project_folder = os.path.join(CustomDEMPlugin.project_folder, "work/")
-        if not os.path.exists(CustomDEMPlugin.project_folder):
-            os.makedirs(CustomDEMPlugin.project_folder)
-        QMessageBox.information(None, "Папка установлена", f"Рабочая папка: {CustomDEMPlugin.project_folder}")
-        CustomDEMPlugin.run_programm()
-    
-    def show_layer_visibility_dialog():
+        self.project_folder = os.path.join(folder, "work/")
+        os.makedirs(self.project_folder, exist_ok=True)
+        QMessageBox.information(
+            None,
+            "Папка установлена",
+            f"Рабочая папка: {self.project_folder}",
+        )
+        self.run_programm()
+
+    def show_layer_visibility_dialog(self):
         # Создать диалоговое окно
         dialog = QDialog()
         dialog.setWindowTitle("Выбор слоев")
@@ -58,19 +67,22 @@ class CustomDEMPlugin:
         layout.addWidget(label)
 
         # Получить доступ к дереву слоев проекта
-        root = QgsProject.instance().layerTreeRoot()
+        project = QgsProject.instance()
+        root = project.layerTreeRoot()
 
         # Создать чекбокс для каждого слоя
         checkboxes = {}
-        for layer in QgsProject.instance().mapLayers().values():
+        for layer in project.mapLayers().values():
             layer_tree_node = root.findLayer(layer.id())
             if layer_tree_node:  # Проверка наличия слоя в дереве
                 checkbox = QCheckBox(layer.name())
-                checkbox.setChecked(layer_tree_node.isVisible())  # Получить настоящую видимость
+                checkbox.setChecked(
+                    layer_tree_node.isVisible()
+                )  # Получить настоящую видимость
                 layout.addWidget(checkbox)
                 checkboxes[layer_tree_node] = checkbox
 
-        # Добавить кнопку 
+        # Добавить кнопку
         apply_button = QPushButton("Применить")
         layout.addWidget(apply_button)
 
@@ -87,7 +99,7 @@ class CustomDEMPlugin:
         dialog.exec_()
 
     # Определите основную функцию для диалога
-    def show_choice_dialog():
+    def show_choice_dialog(self):
         # Создание диалогового окна
         dialog = QDialog()
         dialog.setWindowTitle("Выбор функции")
@@ -109,16 +121,16 @@ class CustomDEMPlugin:
         # Определение действий для кнопок
         def create_waterlines():
             dialog.close()
-            river(CustomDEMPlugin.project_folder)
+            river(self.project_folder)
 
         def create_forest_belts():
             dialog.close()
-            forest(CustomDEMPlugin.project_folder)
-        
+            forest(self.project_folder)
+
         def create_cost_path():
             dialog.close()
-            river(CustomDEMPlugin.project_folder)
-            least_cost_path_analysis(CustomDEMPlugin.project_folder)
+            river(self.project_folder)
+            least_cost_path_analysis(self.project_folder)
 
         # Свяжите кнопки с их действиями
         waterlines_button.clicked.connect(create_waterlines)
@@ -129,57 +141,51 @@ class CustomDEMPlugin:
         dialog.setLayout(layout)
         dialog.exec_()
 
-    def clear_cache():
+    def clear_cache(self):
         project = QgsProject.instance()
-        # Перебор всеч слоев в проекте
-        for layer in project.mapLayers().values():
-            # Проверка, содержит ли имя слоя слово "buffer" 
+        # Перебор всех слоев в проекте
+        for layer in list(project.mapLayers().values()):
+            # Проверка, содержит ли имя слоя слово "buffer"
             if "buffer" in layer.name().lower():
                 # Удалить слой из проекта
                 project.removeMapLayer(layer)
-        for file_pattern in ["*.shp", "*.shx", "*.dbf", "*.prj", "*.tif"]:
-            for file_path in glob.glob(os.path.join(CustomDEMPlugin.project_folder, file_pattern)):
-                try:
-                    os.remove(file_path)
-                    print(f"Deleted: {file_path}")
-                except Exception as e:
-                    print(f"Error deleting {file_path}: {e}")
-                    
+
+        self._delete_files()
         # Очистка кэша холста карты
         iface.mapCanvas().refreshAllLayers()
         # Очистка кэша рендеринга
-        QgsProject.instance().reloadAllLayers()
-        return
+        project.reloadAllLayers()
 
-    def prepare():
+    def prepare(self):
         project = QgsProject.instance()
         # Удалить все слои
-        for layer in list(project.mapLayers().values()): 
+        for layer in list(project.mapLayers().values()):
             project.removeMapLayer(layer)
 
         # Удалить определенные форматы файлов (e.g., shapefiles, GeoTIFFs, etc.)
-        for file_pattern in ["*.shp", "*.shx", "*.dbf", "*.prj", "*.tif"]:
-            for file_path in glob.glob(os.path.join(CustomDEMPlugin.project_folder, file_pattern)):
-                try:
-                    os.remove(file_path)
-                    print(f"Deleted: {file_path}")
-                except Exception as e:
-                    print(f"Error deleting {file_path}: {e}")
-                    
+        self._delete_files()
         # Очистка кэша холста карты
         iface.mapCanvas().refreshAllLayers()
-
         # Очистка кэша рендеринга
-        QgsProject.instance().reloadAllLayers()
-        return
+        project.reloadAllLayers()
 
-    def run_programm():
-        #Подготовка к работе
-        CustomDEMPlugin.clear_cache()
-        CustomDEMPlugin.prepare()
-        
-        #Запуск диалогового окна
-        CustomDEMPlugin.show_choice_dialog()
-        CustomDEMPlugin.show_layer_visibility_dialog()
-        
-        return
+    def _delete_files(self):
+        """
+        Удалить определенные форматы файлов (e.g., shapefiles, GeoTIFFs, etc.)
+        """
+        for file_pattern in ["*.shp", "*.shx", "*.dbf", "*.prj", "*.tif"]:
+            for file_path in glob.glob(os.path.join(self.project_folder, file_pattern)):
+                try:
+                    os.remove(file_path)
+                    print(f"Deleted: {file_path}", flush=True)
+                except Exception as e:
+                    print(f"Error deleting {file_path}: {e}", flush=True)
+
+    def run_programm(self):
+        # Подготовка к работе
+        self.clear_cache()
+        self.prepare()
+
+        # Запуск диалогового окна
+        self.show_choice_dialog()
+        self.show_layer_visibility_dialog()
