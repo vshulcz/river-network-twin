@@ -9,6 +9,50 @@ from qgis.core import (
 )
 from qgis.PyQt.QtWidgets import QMessageBox
 import processing
+import os
+
+# Возвращает путь к полученному файлу
+def generate_slope_layer(dem_path: str, project_folder: str) -> str:
+    os.makedirs(f"{project_folder}/tmp/", exist_ok=True)
+
+    dem_layer = QgsRasterLayer(dem_path, "DEM")
+    crs = dem_layer.crs().authid()
+    extent = dem_layer.extent()
+    center_longitude = (extent.xMinimum() + extent.xMaximum()) / 2
+    utm_zone = int((center_longitude + 180) / 6) + 1
+    target_crs = f"EPSG:{32600 + utm_zone}" if extent.yMinimum() >= 0 else f"EPSG:{32700 + utm_zone}"
+
+    # 2. Перепроектируем DEM в UTM
+    params_reproject = {
+        'INPUT': dem_path,
+        'TARGET_CRS': target_crs,
+        'RESAMPLING': 1,  # 0 = Nearest Neighbour (для категорийных), 1 = Bilinear (лучше для DEM)
+        'OUTPUT': 'TEMPORARY_OUTPUT'
+    }
+    output_reprojected = processing.run("gdal:warpreproject", params_reproject)['OUTPUT']
+
+    # 3. Рассчитываем уклон (в градусах)
+    params_slope = {
+        'INPUT': output_reprojected,
+        'BAND': 1,
+        'SCALE': 1,  # Масштаб (оставьте 1, если пиксели в метрах)
+        'AS_PERCENT': False,  # False = градусы, True = проценты
+        'ZEVENBERGEN': False,  # False = стандартный алгоритм, True = более гладкий
+        'OUTPUT': 'TEMPORARY_OUTPUT'
+    }
+    output_slope_utm = processing.run("gdal:slope", params_slope)['OUTPUT']
+
+    # возвращаем в исходные координаты
+    output_slope = f"{project_folder}/slope_layer.tif"
+    params = {
+        'INPUT': output_slope_utm,
+        'TARGET_CRS': crs,  # Целевая система координат
+        'RESAMPLING': 1,  # 1 = Bilinear (лучше для DEM)
+        'OUTPUT': output_slope
+    }
+    processing.run("gdal:warpreproject", params)
+
+    return output_slope
 
 def least_cost_path_analysis(project_folder):
     # Получение необходимых слоев
@@ -21,13 +65,8 @@ def least_cost_path_analysis(project_folder):
     try:
         cost_layer = QgsProject.instance().mapLayersByName('Slope Layer')[0]
     except IndexError:
-        processing.run("gdal:slope", {
-            'INPUT': f"{project_folder}/srtm_output.tif",
-            'Z_FACTOR': 1,              # Масштабный коэффициент (1 для метров)
-            'SCALE': 1,                 # Масштаб (1 если не градусы)
-            'OUTPUT': f"{project_folder}/slope_layer.tif"
-        })
-        cost_layer = QgsRasterLayer(f"{project_folder}/slope_layer.tif", 'Slope Layer')
+        slope_layer_path = generate_slope_layer(f"{project_folder}/srtm_output.tif", project_folder)
+        cost_layer = QgsRasterLayer(slope_layer_path, 'Slope Layer')
         if cost_layer.isValid():
             QgsProject.instance().addMapLayer(cost_layer)
             print("Создан слой уклона", flush=True)
