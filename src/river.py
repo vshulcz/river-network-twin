@@ -220,6 +220,9 @@ def river(project_folder):
             end_point, QgsRaster.IdentifyFormatValue
         )
 
+        start_z_value = None
+        end_z_value = None
+
         if start_z.isValid():
             start_z_value = start_z.results()[1]
             feature["start_z"] = start_z_value
@@ -228,7 +231,7 @@ def river(project_folder):
             end_z_value = end_z.results()[1]
             feature["end_z"] = end_z_value
 
-        changes[feature.id()] = {idx_start_z: start_z, idx_end_z: end_z}
+        changes[feature.id()] = {idx_start_z: start_z_value, idx_end_z: end_z_value}
 
     line_provider.changeAttributeValues(changes)
     end_y.commitChanges()
