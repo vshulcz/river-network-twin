@@ -75,37 +75,48 @@ def least_cost_path_analysis(project_folder):
             return
 
 
-    start_layer = QgsVectorLayer("Point", "point", "memory")
-    start_layer.setCrs(points_layer.sourceCrs()) # set the coordinate system from layer to the new layer
-    pr1 = start_layer.dataProvider() # get the layers data provider (can't explain what it is exactly)
+    paths_layer = QgsVectorLayer("paths", "Output least cost path", "memory")
+    paths_layer.setCrs(points_layer.crs())
     for p in points_layer.getFeatures():
         if p['z'] != None:
             point = p
-            break
-    pr1.addFeature(point) # add the feature to the layer via data provider
-    start_layer.updateFeature(point)
 
-    print("Построен слой с точкой", flush=True)
+            start_layer = QgsVectorLayer("Point", "point", "memory")
+            start_layer.setCrs(points_layer.sourceCrs()) # set the coordinate system from layer to the new layer
+            pr1 = start_layer.dataProvider() # get the layers data provider (can't explain what it is exactly)
+            pr1.addFeature(point) # add the feature to the layer via data provider
+            start_layer.updateFeature(point)
 
-    # Параметры для алгоритма Least Cost Path
-    params = {
-        'INPUT_COST_RASTER': cost_layer,
-        'INPUT_RASTER_BAND': 1,
-        'INPUT_START_LAYER': start_layer,
-        'INPUT_END_LAYER': points_layer,
-        'BOOLEAN_FIND_LEAST_PATH_TO_ALL_ENDS': False,
-        'BOOLEAN_OUTPUT_LINEAR_REFERENCE': False,
-        'OUTPUT': 'TEMPORARY_OUTPUT'
-    }
-    try:
-        result = processing.run("Cost distance analysis:Least Cost Path", params)
-        path_layer = result['OUTPUT']
-        path_layer.setName("Output least cost path")
-        QgsProject.instance().addMapLayer(path_layer)
-        print("Создан слой с путями", flush=True)
-    except Exception as e:
-        QMessageBox.critical(None, "Ошибка", f"Ошибка при выполнении анализа: {e}")
-        return
+            print("Построен слой с точкой", flush=True)
+
+            # Параметры для алгоритма Least Cost Path
+            params = {
+                'INPUT_COST_RASTER': cost_layer,
+                'INPUT_RASTER_BAND': 1,
+                'INPUT_START_LAYER': start_layer,
+                'INPUT_END_LAYER': points_layer,
+                'BOOLEAN_FIND_LEAST_PATH_TO_ALL_ENDS': False,
+                'BOOLEAN_OUTPUT_LINEAR_REFERENCE': False,
+                'OUTPUT': 'TEMPORARY_OUTPUT'
+            }
+            try:
+                result = processing.run("Cost distance analysis:Least Cost Path", params)
+                layer = result['OUTPUT']
+
+                params = {
+                    'LAYERS': [paths_layer, layer],  # Список слоёв
+                    'CRS': paths_layer.crs(),         # Используем CRS первого слоя (можно задать вручную, например, 'EPSG:4326')
+                    'OUTPUT': 'memory:'          # Результат в памяти (можно сохранить в файл: 'C:/путь/к/файлу.shp')
+                }
+
+                # Запуск обработки
+                result = processing.run("native:mergevectorlayers", params)
+                paths_layer = result['OUTPUT']
+            except Exception as e:
+                print(f"Ошибка при выполнении анализа: {e}", flush=True)
+            
+    QgsProject.instance().addMapLayer(paths_layer)
+    print("Создан слой с путями", flush=True)
 
     # Вспомогательная функция для расчёта минимальной высоты вдоль линии
     def calculate_minimum_elevation(raster_layer, line_geom):
@@ -129,11 +140,11 @@ def least_cost_path_analysis(project_folder):
     except IndexError:
         QMessageBox.warning(None, "Ошибка", "Слой 'SRTM DEM Layer' не найден.")
         return
-    return
+    
 
     # Фильтрация путей по критерию разницы высот
     paths_to_delete = []
-    for feature in path_layer.getFeatures():
+    for feature in paths_layer.getFeatures():
         geom = feature.geometry()
         min_elev = calculate_minimum_elevation(elevation_layer, geom)
         if min_elev is None:
@@ -157,10 +168,10 @@ def least_cost_path_analysis(project_folder):
             if min_elev < z1 - 15:
                 paths_to_delete.append(feature.id())
     if paths_to_delete:
-        path_layer.startEditing()
+        paths_layer.startEditing()
         for fid in paths_to_delete:
-            path_layer.deleteFeature(fid)
-        path_layer.commitChanges()
+            paths_layer.deleteFeature(fid)
+        paths_layer.commitChanges()
         QMessageBox.information(None, "Информация", f"Удалено {len(paths_to_delete)} путей по критерию высоты.")
 
     # Фильтрация путей, пересекающих реки (исключая совпадающие начала/концы)
@@ -171,7 +182,7 @@ def least_cost_path_analysis(project_folder):
         return
     spatial_index = QgsSpatialIndex(rivers_layer.getFeatures())
     paths_to_delete = []
-    for feature in path_layer.getFeatures():
+    for feature in paths_layer.getFeatures():
         geom = feature.geometry()
         if geom.isEmpty():
             continue
@@ -189,8 +200,8 @@ def least_cost_path_analysis(project_folder):
                 paths_to_delete.append(feature.id())
                 break
     if paths_to_delete:
-        path_layer.startEditing()
+        paths_layer.startEditing()
         for fid in paths_to_delete:
-            path_layer.deleteFeature(fid)
-        path_layer.commitChanges()
+            paths_layer.deleteFeature(fid)
+        paths_layer.commitChanges()
         QMessageBox.information(None, "Информация", f"Удалено {len(paths_to_delete)} путей, пересекающих реки.")
