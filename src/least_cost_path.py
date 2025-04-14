@@ -10,6 +10,8 @@ from qgis.core import (
 from qgis.PyQt.QtWidgets import QMessageBox
 import processing
 import os
+import numpy as np
+from osgeo import gdal
 
 # Возвращает путь к полученному файлу
 def generate_slope_layer(dem_path: str, project_folder: str) -> str:
@@ -54,6 +56,75 @@ def generate_slope_layer(dem_path: str, project_folder: str) -> str:
 
     return output_slope
 
+def calculate_local_variance(input_raster_path, output_path, window_size=3):
+    """
+    Рассчитывает локальную дисперсию для растра
+    :param input_raster_path: путь к входному растру
+    :param output_path: путь для сохранения результата
+    :param window_size: размер окна (нечетное число)
+    """
+    # 1. Загружаем растр через GDAL
+    dataset = gdal.Open(input_raster_path)
+    band = dataset.GetRasterBand(1)
+    raster_array = band.ReadAsArray().astype(np.float32)
+    
+    # 2. Создаем массив для результатов
+    variance_array = np.zeros_like(raster_array)
+    pad_size = window_size // 2
+    
+    # 3. Добавляем границы для обработки краев
+    padded = np.pad(raster_array, pad_size, mode='reflect')
+    
+    # 4. Расчет дисперсии в скользящем окне
+    for i in range(pad_size, padded.shape[0] - pad_size):
+        for j in range(pad_size, padded.shape[1] - pad_size):
+            window = padded[i-pad_size:i+pad_size+1, j-pad_size:j+pad_size+1]
+            variance_array[i-pad_size, j-pad_size] = np.var(window)
+    
+    variance_array[variance_array < 0] = 0
+    if np.any(variance_array > 0):
+        median_var = np.nanmedian(variance_array)
+        mad = 1.4826 * np.nanmedian(np.abs(variance_array - median_var))  # Median Absolute Deviation
+        threshold = median_var + 3 * mad
+        print(f"Threshold: {threshold}", flush=True)
+        variance_array[variance_array > threshold] = threshold
+    
+    print(f"Array type: {variance_array.dtype}", flush=True)
+    variance_array = variance_array.astype(np.float32)
+    print(f"Max: {np.nanmax(variance_array)}", flush=True)
+    variance_array = np.nan_to_num(variance_array, nan=10)
+    
+    # 5. Сохраняем результат
+    driver = gdal.GetDriverByName('GTiff')
+    out_dataset = driver.Create(
+        output_path,
+        dataset.RasterXSize,
+        dataset.RasterYSize,
+        1,
+        gdal.GDT_Float32
+    )
+    out_dataset.SetGeoTransform(dataset.GetGeoTransform())
+    out_dataset.SetProjection(dataset.GetProjection())
+    out_band: gdal.Band = out_dataset.GetRasterBand(1)
+    out_band.SetNoDataValue(-1)
+    out_band.WriteArray(variance_array)
+    out_band.ComputeStatistics(False)
+    out_band.SetStatistics(
+        float(np.nanmin(variance_array)),       # Минимальное значение
+        float(np.nanmax(variance_array)),      # Максимальное значение
+        float(np.nanmean(variance_array)),     # Среднее
+        float(np.std(variance_array))
+    )
+    out_band.FlushCache()
+
+    out_dataset.SetMetadataItem("STATISTICS_MINIMUM", "0")  # Явно задаем минимум
+    out_dataset.SetMetadataItem("STATISTICS_MAXIMUM", str(np.nanmax(variance_array)))  # Реальный максимум
+    out_dataset.SetMetadataItem("STATISTICS_MEAN", str(np.nanmean(variance_array)))
+    
+    # 6. Закрываем файлы
+    dataset = None
+    out_dataset = None
+
 def least_cost_path_analysis(project_folder):
     # Получение необходимых слоев
     try:
@@ -66,7 +137,9 @@ def least_cost_path_analysis(project_folder):
         cost_layer = QgsProject.instance().mapLayersByName('Slope Layer')[0]
     except IndexError:
         slope_layer_path = generate_slope_layer(f"{project_folder}/srtm_output.tif", project_folder)
-        cost_layer = QgsRasterLayer(slope_layer_path, 'Slope Layer')
+        disp_layer_path = f"{project_folder}/slope_disp.tif"
+        calculate_local_variance(slope_layer_path, disp_layer_path, 3)
+        cost_layer = QgsRasterLayer(disp_layer_path, 'Slope Disp Layer')
         if cost_layer.isValid():
             QgsProject.instance().addMapLayer(cost_layer)
             print("Создан слой уклона", flush=True)
