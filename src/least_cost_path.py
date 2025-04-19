@@ -12,6 +12,46 @@ import processing
 import os
 import numpy as np
 from osgeo import gdal
+from datetime import datetime
+
+def mean_pool2d(arr, kernel_size, stride=None):
+    """
+    Применяет max pooling к 2D массиву.
+    
+    Параметры:
+        arr: 2D NumPy array
+        kernel_size: размер ядра (int или tuple) (h, w)
+        stride: шаг (int или tuple). Если None, равен kernel_size
+    
+    Возвращает:
+        2D массив после max pooling
+    """
+    if isinstance(kernel_size, int):
+        kernel_size = (kernel_size, kernel_size)
+    if stride is None:
+        stride = kernel_size
+    elif isinstance(stride, int):
+        stride = (stride, stride)
+    
+    # Вычисляем размеры выходного массива
+    h_out = (arr.shape[0] - kernel_size[0]) // stride[0] + 1
+    w_out = (arr.shape[1] - kernel_size[1]) // stride[1] + 1
+    
+    result = np.zeros((h_out, w_out))
+    
+    for i in range(h_out):
+        for j in range(w_out):
+            # Вычисляем окно
+            h_start = i * stride[0]
+            h_end = h_start + kernel_size[0]
+            w_start = j * stride[1]
+            w_end = w_start + kernel_size[1]
+            
+            # Применяем max pooling к окну
+            window = arr[h_start:h_end, w_start:w_end]
+            result[i, j] = np.mean(window)
+    
+    return result
 
 # Возвращает путь к полученному файлу
 def generate_slope_layer(dem_path: str, project_folder: str) -> str:
@@ -56,7 +96,7 @@ def generate_slope_layer(dem_path: str, project_folder: str) -> str:
 
     return output_slope
 
-def calculate_local_variance(input_raster_path, output_path, window_size=3):
+def calculate_local_variance(input_raster_path, output_path, window_size=3, pool_size = 3):
     """
     Рассчитывает локальную дисперсию для растра
     :param input_raster_path: путь к входному растру
@@ -89,21 +129,32 @@ def calculate_local_variance(input_raster_path, output_path, window_size=3):
         print(f"Threshold: {threshold}", flush=True)
         variance_array[variance_array > threshold] = threshold
     
-    print(f"Array type: {variance_array.dtype}", flush=True)
-    variance_array = variance_array.astype(np.float32)
-    print(f"Max: {np.nanmax(variance_array)}", flush=True)
     variance_array = np.nan_to_num(variance_array, nan=10)
+
+    print(variance_array.shape, flush=True)
+    old_shape = variance_array.shape
+    variance_array = mean_pool2d(variance_array, pool_size)
+    print(variance_array.shape, flush=True)
     
     # 5. Сохраняем результат
     driver = gdal.GetDriverByName('GTiff')
     out_dataset = driver.Create(
         output_path,
-        dataset.RasterXSize,
-        dataset.RasterYSize,
+        variance_array.shape[1],
+        variance_array.shape[0],
         1,
         gdal.GDT_Float32
     )
-    out_dataset.SetGeoTransform(dataset.GetGeoTransform())
+    geotransform = dataset.GetGeoTransform()
+    new_geotransform = (
+        geotransform[0],                 # верхний левый X (не меняем)
+        geotransform[1] * old_shape[1] / variance_array.shape[1],   # размер пикселя по X увеличиваем
+        geotransform[2],                 # вращение по X (обычно 0)
+        geotransform[3],                 # верхний левый Y (не меняем)
+        geotransform[4],                 # вращение по Y (обычно 0)
+        geotransform[5] * old_shape[0] / variance_array.shape[0]    # размер пикселя по Y увеличиваем (отрицательное значение)
+    )
+    out_dataset.SetGeoTransform(new_geotransform)
     out_dataset.SetProjection(dataset.GetProjection())
     out_band: gdal.Band = out_dataset.GetRasterBand(1)
     out_band.SetNoDataValue(-1)
@@ -138,7 +189,7 @@ def least_cost_path_analysis(project_folder):
     except IndexError:
         slope_layer_path = generate_slope_layer(f"{project_folder}/srtm_output.tif", project_folder)
         disp_layer_path = f"{project_folder}/slope_disp.tif"
-        calculate_local_variance(slope_layer_path, disp_layer_path, 3)
+        calculate_local_variance(slope_layer_path, disp_layer_path, 3, 3)
         cost_layer = QgsRasterLayer(disp_layer_path, 'Slope Disp Layer')
         if cost_layer.isValid():
             QgsProject.instance().addMapLayer(cost_layer)
@@ -147,6 +198,7 @@ def least_cost_path_analysis(project_folder):
             QMessageBox.warning(None, "Ошибка", "Не удалось загрузить слой крутизны.")
             return
 
+    print(f"Старт: {datetime.now()}", flush=True)
 
     paths_layer = QgsVectorLayer("paths", "Output least cost path", "memory")
     paths_layer.setCrs(points_layer.crs())
@@ -190,6 +242,8 @@ def least_cost_path_analysis(project_folder):
             
     QgsProject.instance().addMapLayer(paths_layer)
     print("Создан слой с путями", flush=True)
+    
+    print(f"Конец: {datetime.now()}", flush=True)
 
     # Вспомогательная функция для расчёта минимальной высоты вдоль линии
     def calculate_minimum_elevation(raster_layer, line_geom):
